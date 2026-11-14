@@ -1,0 +1,15 @@
+{
+  "name": "gelo-core-engine",
+  "version": "1.0.0",
+  "description": "Backend engine para Gelo con scraping y automatización",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "playwright": "^1.44.0"
+  }
+}
