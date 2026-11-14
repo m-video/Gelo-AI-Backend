@@ -9,112 +9,103 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// 1. Scraping autónomo de páginas web
+// 1. Scraping web autónomo con Playwright y Cheerio
 async function scrapeUrl(url) {
   try {
     const browser = await chromium.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-zygote',
+        '--single-process'
+      ]
     });
-    const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-    });
-    const page = await context.newPage();
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
     const content = await page.content();
     await browser.close();
 
     const $ = cheerio.load(content);
     $('script, style, nav, footer, header, noscript, iframe').remove();
-    return $('body').text().replace(/\s+/g, ' ').trim().slice(0, 12000);
+    return $('body').text().replace(/\s+/g, ' ').trim().slice(0, 8000);
   } catch (err) {
-    console.error(`[Scraper] Error extrayendo ${url}:`, err.message);
+    console.error(`[Scraper] Error en ${url}:`, err.message);
     return null;
   }
 }
 
-// 2. Consulta y automatización de interfaz
-async function interactuarConGeminiWeb(promptTexto, cookiesArray = []) {
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+// 2. Motor de IA en la nube (sin barrera de login ni captchas)
+async function consultarModeloIA(promptCompleto) {
+  const endpoint = "https://api-inference.huggingface.co/models/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B";
+  
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "Gelo-AI-Assistant/1.0"
+    },
+    body: JSON.stringify({
+      inputs: `Eres Gelo, un asistente inteligente, analítico y directo. Responde:\n\n${promptCompleto}`,
+      parameters: { max_new_tokens: 1024, return_full_text: false }
+    })
   });
 
-  const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-  });
-
-  if (cookiesArray && cookiesArray.length > 0) {
-    await context.addCookies(cookiesArray);
+  if (!res.ok) {
+    throw new Error(`Error en el motor de respuesta (Código HTTP ${res.status})`);
   }
 
-  const page = await context.newPage();
-
-  try {
-    await page.goto('https://gemini.google.com/app', { waitUntil: 'networkidle', timeout: 35000 });
-
-    const inputSelector = 'rich-textarea p, div[contenteditable="true"], textarea';
-    await page.waitForSelector(inputSelector, { timeout: 15000 });
-
-    await page.click(inputSelector);
-    await page.keyboard.type(promptTexto);
-    await page.keyboard.press('Enter');
-
-    const responseSelector = 'model-response message-content, .model-response-text';
-    await page.waitForSelector(responseSelector, { timeout: 45000 });
-    await page.waitForTimeout(3500);
-
-    const respuesta = await page.evaluate((sel) => {
-      const nodes = document.querySelectorAll(sel);
-      if (!nodes.length) return null;
-      return nodes[nodes.length - 1].innerText;
-    }, responseSelector);
-
-    await browser.close();
-    return respuesta || 'No se pudo leer la respuesta.';
-  } catch (err) {
-    await browser.close();
-    throw new Error('Error al interactuar con la interfaz: ' + err.message);
+  const data = await res.json();
+  if (Array.isArray(data) && data[0]?.generated_text) {
+    return data[0].generated_text;
   }
+  return data?.generated_text || (typeof data === 'string' ? data : JSON.stringify(data));
 }
 
-// Ruta principal para el chat de Gelo
+// Ruta principal llamada por gelo.html
 app.post('/chat', async (req, res) => {
-  const { prompt, cookies = [] } = req.body;
+  const { prompt } = req.body;
 
   if (!prompt) {
-    return res.status(400).json({ error: 'Falta el prompt en la petición.' });
+    return res.status(400).json({ error: 'Falta el prompt en la solicitud.' });
   }
 
   try {
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const urlsEncontradas = prompt.match(urlRegex);
-    let contextoScraping = '';
+    console.log(`[Gelo] Consulta entrante: ${prompt}`);
 
-    if (urlsEncontradas && urlsEncontradas.length > 0) {
-      for (const targetUrl of urlsEncontradas) {
-        const textoWeb = await scrapeUrl(targetUrl);
-        if (textoWeb) {
-          contextoScraping += `\n\n[Información extraída de ${targetUrl}]:\n${textoWeb}\n`;
+    // Detección automática y scraping si el usuario pasa URLs
+    const urls = prompt.match(/(https?:\/\/[^\s]+)/g);
+    let datosWeb = '';
+
+    if (urls && urls.length > 0) {
+      for (const link of urls) {
+        console.log(`[Gelo] Scrapeando contenido de: ${link}`);
+        const extraido = await scrapeUrl(link);
+        if (extraido) {
+          datosWeb += `\n\n[Contenido web extraído de ${link}]:\n${extraido}\n`;
         }
       }
     }
 
-    const promptFinal = contextoScraping
-      ? `Eres Gelo, una IA avanzada e independiente. Responde incorporando la información extraída de la web:\n${contextoScraping}\n\nConsulta del usuario: ${prompt}`
+    const promptFinal = datosWeb 
+      ? `Información de la web:\n${datosWeb}\n\nPregunta: ${prompt}`
       : prompt;
 
-    const respuestaTexto = await interactuarConGeminiWeb(promptFinal, cookies);
-    return res.json({ response: respuestaTexto });
+    const respuesta = await consultarModeloIA(promptFinal);
+    return res.json({ response: respuesta });
+
   } catch (error) {
+    console.error('[Gelo] Error:', error.message);
     return res.status(500).json({ error: error.message });
   }
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'Gelo Backend' });
+  res.json({ status: 'ok', engine: 'Gelo Backend Live' });
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor Gelo corriendo en el puerto ${PORT}`);
+  console.log(`🚀 Servidor Gelo operativo en el puerto ${PORT}`);
 });
