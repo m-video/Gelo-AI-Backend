@@ -7,42 +7,51 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Ruta raíz informativa para evitar el "Cannot GET /"
+// Mapeo de nombres del frontend a los identificadores libres
+const MODEL_MAPPING = {
+  openai: 'openai',
+  deepseek: 'deepseek',
+  llama: 'llama',
+  gemini: 'gemini',
+  mistral: 'mistral',
+  qwen: 'qwen'
+};
+
 app.get('/', (req, res) => {
   res.send('Servidor Gelo AI activo y listo.');
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', engine: 'Gelo Backend Live' });
+  res.json({ status: 'ok', engine: 'Gelo Multi-Model Live' });
 });
 
-// Endpoint principal del chat
 app.post('/chat', async (req, res) => {
-  const { prompt } = req.body;
+  const { prompt, model = 'openai' } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: 'Falta el mensaje en la consulta.' });
   }
 
-  try {
-    console.log(`[Gelo] Consulta entrante: ${prompt}`);
+  const selectedModel = MODEL_MAPPING[model] || 'openai';
 
-    // Llamada directa a red de inferencia pública sin autenticación ni bloqueos de IP
-    const url = "https://text.pollinations.ai/openai";
+  try {
+    console.log(`[Gelo] Procesando consulta con modelo: ${selectedModel}`);
+
+    const url = 'https://text.pollinations.ai/openai';
     const aiResponse = await fetch(url, {
-      method: "POST",
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json"
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: "openai",
+        model: selectedModel,
         messages: [
           {
-            role: "system",
-            content: "Eres Gelo, una inteligencia artificial general avanzada, útil, directa y clara. Responde siempre en español."
+            role: 'system',
+            content: 'Eres Gelo, una inteligencia artificial general avanzada, analítica, directa y precisa. Responde siempre en español manteniendo el contexto completo de la conversación.'
           },
           {
-            role: "user",
+            role: 'user',
             content: prompt
           }
         ]
@@ -54,7 +63,10 @@ app.post('/chat', async (req, res) => {
     }
 
     const data = await aiResponse.json();
-    const textoRespuesta = data.choices?.[0]?.message?.content || 'Sin respuesta del modelo.';
+    let textoRespuesta = data.choices?.[0]?.message?.content || 'Sin respuesta del modelo.';
+
+    // Limpieza de etiquetas de pensamiento para modelos tipo DeepSeek R1
+    textoRespuesta = textoRespuesta.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 
     return res.json({ response: textoRespuesta });
 
