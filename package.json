@@ -4,6 +4,7 @@
   "description": "Gelo AI Backend",
   "main": "server.js",
   "scripts": {
+    "build": "npx puppeteer browsers install chrome",
     "start": "node server.js"
   },
   "dependencies": {
